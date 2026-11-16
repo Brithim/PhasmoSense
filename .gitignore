@@ -30,4 +30,4 @@ publish-update.bat
 link-github.bat
 build-installer.bat
 installer.iss
-RELEASE_NOTES.md
+RELEASE_NOTES*.md
