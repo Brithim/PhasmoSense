@@ -1,24 +1,48 @@
 import asyncio
 import ctypes
 import json
+import os
+import sys
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
+
+# Ensure runtime directory and DLLs folder are in Windows DLL search path (Python 3.8+)
+if hasattr(os, "add_dll_directory"):
+    try:
+        py_dir = Path(sys.executable).parent
+        os.add_dll_directory(str(py_dir))
+        dll_sub = py_dir / "DLLs"
+        if dll_sub.exists():
+            os.add_dll_directory(str(dll_sub))
+    except Exception:
+        pass
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-from config import ConfigManager
-from vision_engine import VisionEngine
-from audio_engine import AudioEngine
-from simulator import SimulationDeck
-import database
+try:
+    from config import ConfigManager
+    from vision_engine import VisionEngine
+    from audio_engine import AudioEngine
+    from simulator import SimulationDeck
+    import database
 
-
-config_manager = ConfigManager()
-vision_engine = VisionEngine(config_manager)
-audio_engine = AudioEngine(config_manager)
+    config_manager = ConfigManager()
+    vision_engine = VisionEngine(config_manager)
+    audio_engine = AudioEngine(config_manager)
+except Exception as exc:
+    import traceback
+    err_text = traceback.format_exc()
+    print(f"[FATAL STARTUP ERROR] {err_text}", file=sys.stderr, flush=True)
+    try:
+        with open(Path(__file__).parent / "backend_crash.log", "w", encoding="utf-8") as f:
+            f.write(err_text)
+    except Exception:
+        pass
+    raise
 connected_clients: Set[WebSocket] = set()
 preview_subscribers: Set[WebSocket] = set()
 bg_task: asyncio.Task | None = None

@@ -30,14 +30,53 @@ function loadSavedHotkeys() {
 function startPythonBackend() {
   const runtimePython = path.resolve(__dirname, '../../backend/runtime/python.exe');
   const venvPython = path.resolve(__dirname, '../../backend/.venv/Scripts/python.exe');
-  const pyExe = fs.existsSync(runtimePython) ? runtimePython : venvPython;
+  const pyExe = fs.existsSync(runtimePython) ? runtimePython : (fs.existsSync(venvPython) ? venvPython : null);
   const serverScript = path.resolve(__dirname, '../../backend/server.py');
-  if (fs.existsSync(pyExe) && fs.existsSync(serverScript)) {
-    pythonProcess = spawn(pyExe, [serverScript], {
-      cwd: path.resolve(__dirname, '../../backend'),
-      stdio: 'ignore',
+  const backendDir = path.resolve(__dirname, '../../backend');
+  const logPath = path.join(backendDir, 'backend.log');
+
+  try {
+    const logStream = fs.createWriteStream(logPath, { flags: 'a' });
+    const nowIso = new Date().toISOString();
+    logStream.write(`\n--- [${nowIso}] PhasmoSense Backend Startup ---\n`);
+
+    if (!pyExe || !fs.existsSync(serverScript)) {
+      logStream.write(`[ERROR] Python executable or server.py was not found!\n`);
+      logStream.write(`  pyExe: ${pyExe}\n`);
+      logStream.write(`  serverScript: ${serverScript}\n`);
+      return;
+    }
+
+    logStream.write(`[INFO] Executable: ${pyExe}\n`);
+    logStream.write(`[INFO] Server script: ${serverScript}\n`);
+    logStream.write(`[INFO] Working Directory: ${backendDir}\n`);
+
+    const pyDir = path.dirname(pyExe);
+    const spawnEnv = {
+      ...process.env,
+      PATH: `${pyDir};${path.join(pyDir, 'DLLs')};${backendDir};${process.env.PATH || ''}`,
+      PYTHONUNBUFFERED: '1',
+      PYTHONIOENCODING: 'utf-8',
+    };
+
+    pythonProcess = spawn(pyExe, ['-u', serverScript], {
+      cwd: backendDir,
+      env: spawnEnv,
       windowsHide: true,
     });
+
+    pythonProcess.stdout.pipe(logStream);
+    pythonProcess.stderr.pipe(logStream);
+
+    pythonProcess.on('error', (err) => {
+      logStream.write(`[PROCESS ERROR] Failed to spawn Python: ${err.message}\n`);
+    });
+
+    pythonProcess.on('exit', (code, signal) => {
+      logStream.write(`[PROCESS EXIT] Python exited with code ${code}, signal ${signal}\n`);
+    });
+  } catch (err) {
+    console.error('Failed to initialize backend process:', err);
   }
 }
 

@@ -53,6 +53,22 @@ if "%PY_EXE%"=="" (
     )
 )
 
+:: Quick dependency & C++ runtime diagnostic check
+"%PY_EXE%" -c "import fastapi, cv2, numpy" >nul 2>nul
+if %ERRORLEVEL% neq 0 (
+    echo.
+    echo ========================================================
+    echo [WARNING] Background engine dependencies failed to load!
+    echo ========================================================
+    echo Diagnostic output:
+    "%PY_EXE%" -c "import fastapi, cv2, numpy"
+    echo.
+    echo If a DLL error is shown above, install the official Microsoft Visual C++ runtime:
+    echo   https://aka.ms/vs/17/release/vc_redist.x64.exe
+    echo.
+    pause
+)
+
 echo ========================================================
 echo   PhasmoSense - Anti-Cheat-Safe Overlay ^& Ghost Solver
 echo ========================================================
