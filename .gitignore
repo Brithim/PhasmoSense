@@ -1,0 +1,32 @@
+# Python Runtimes & Caches
+backend/.venv/
+backend/__pycache__/
+*.pyc
+*.pyo
+
+# Node Modules & Intermediate Webpack/Vite Chunks
+overlay/node_modules/
+overlay/.vite/
+
+# User-Specific Match Data & Configurations
+backend/phasmosense_history.db
+backend/user_config.json
+backend/user_config.json.bak
+*.log
+
+# Windows & OS Artifacts
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Temporary Release Archives
+*.zip
+*.tar.gz
+dist_installer/
+staging/
+
+# Developer & Release Automation Tools (Local Only)
+publish-update.bat
+link-github.bat
+build-installer.bat
+installer.iss
