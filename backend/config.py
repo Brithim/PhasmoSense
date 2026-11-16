@@ -30,6 +30,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "detectors_enabled": {
         "vision_engine_enabled": True,
         "audio_engine_enabled": True,
+        "phasmophobia_audio_only": True,
         "journal_ocr": True,
         "truck_sanity_ocr": True,
         "equipment_cv": True,

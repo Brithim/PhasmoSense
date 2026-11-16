@@ -225,6 +225,8 @@ class AudioEngine:
         self.telemetry["audio_muted"] = is_audio_muted
         dev = f"{self.device_name} [MUTED / OFF]" if is_audio_muted else self.device_name
         self.telemetry["device_name"] = dev
+        phasmo_only = self.config_manager.config.get("detectors_enabled", {}).get("phasmophobia_audio_only", True)
+        is_isolated = ("Phasmophobia.exe" in self.device_name) and ("Isolated" in self.device_name)
         return {
             "bpm": round(self.current_bpm, 1),
             "mps": round(self.current_mps, 2),
@@ -240,41 +242,73 @@ class AudioEngine:
             "last_onset_band": self.last_onset_band,
             "flash_active": (now - self.last_onset_flash_ts) < 0.28,
             "audio_muted": is_audio_muted,
+            "audio_isolated": is_isolated,
+            "phasmophobia_audio_only": phasmo_only,
         }
 
     def _find_phasmo_pid(self) -> Optional[int]:
-        if psutil is None:
-            return None
-        try:
-            for p in psutil.process_iter(["pid", "name"]):
-                try:
-                    name = str(p.info.get("name") or "")
-                    if name and "phasmophobia" in name.lower():
-                        return int(p.info["pid"])
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
-        except Exception:
-            pass
+        # 1. Fast-path: Win32 FindWindowW to check if Phasmophobia game window exists
+        if _user32 is not None:
+            try:
+                hwnd = _user32.FindWindowW(None, "Phasmophobia")
+                if hwnd:
+                    pid = ctypes.c_ulong()
+                    _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                    if pid.value > 0:
+                        if psutil is None or psutil.pid_exists(pid.value):
+                            return int(pid.value)
+            except Exception:
+                pass
+
+        # 2. Process enumeration via psutil
+        if psutil is not None:
+            try:
+                for p in psutil.process_iter(["pid", "name"]):
+                    try:
+                        name = str(p.info.get("name") or "").lower()
+                        if "phasmophobia" in name:
+                            return int(p.info["pid"])
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+            except Exception:
+                pass
         return None
 
     def _audio_loop(self) -> None:
         while self.running:
+            cfg = self.config_manager.config
+            detectors = cfg.get("detectors_enabled", {})
+            audio_enabled = detectors.get("audio_engine_enabled", True)
+            phasmo_only = detectors.get("phasmophobia_audio_only", True)
+
+            # Master switch: if audio engine is disabled, sleep in quiet state
+            if not audio_enabled:
+                self.device_name = "Audio Engine [MUTED / OFF]"
+                self.spectrum_bars = [0.0] * 16
+                self.current_bpm = 0.0
+                self.current_mps = 0.0
+                time.sleep(0.3)
+                continue
+
             # 1. Attempt Dedicated Per-Process Audio Capture for Phasmophobia.exe
             phasmo_pid = self._find_phasmo_pid()
             if proctap is not None and phasmo_pid is not None:
                 tap = None
                 try:
+                    print(f"[AudioEngine] Attaching isolated WASAPI process tap to Phasmophobia.exe (PID {phasmo_pid})...")
                     tap = proctap.ProcessAudioCapture(phasmo_pid)
                     tap.start()
                     self.sample_rate = 48000
                     self.device_name = f"Phasmophobia.exe (PID {phasmo_pid}) Isolated"
 
                     while self.running:
-                        if not self.config_manager.config.get("detectors_enabled", {}).get("audio_engine_enabled", True):
+                        current_detectors = self.config_manager.config.get("detectors_enabled", {})
+                        if not current_detectors.get("audio_engine_enabled", True):
                             self.device_name = f"Phasmophobia.exe (PID {phasmo_pid}) [MUTED / OFF]"
                             self.spectrum_bars = [0.0] * 16
                             time.sleep(0.15)
                             continue
+
                         chunk_bytes = tap.read(timeout=0.25)
                         if chunk_bytes is not None and len(chunk_bytes) >= 128:
                             # proctap returns standard 48kHz, 2-channel, float32 [-1.0..1.0]
@@ -282,10 +316,14 @@ class AudioEngine:
                             mono = np.mean(stereo, axis=1)
                             self.analyze_samples(mono, self.sample_rate, stereo_samples=stereo)
                         else:
+                            # Decay spectrum bars when game is quiet / tabbed out
+                            self.spectrum_bars = [max(0.0, x * 0.82) for x in self.spectrum_bars]
                             if psutil is not None and not psutil.pid_exists(phasmo_pid):
+                                print(f"[AudioEngine] Phasmophobia.exe (PID {phasmo_pid}) has closed.")
                                 break
-                except Exception:
-                    pass
+                            time.sleep(0.02)
+                except Exception as exc:
+                    print(f"[AudioEngine] ProcessAudioCapture error: {exc}")
                 finally:
                     if tap is not None:
                         try:
@@ -298,9 +336,18 @@ class AudioEngine:
                 if not self.running:
                     break
 
-            # 2. System-Wide WASAPI Loopback Fallback (When Phasmophobia is not yet running)
+            # 2. If Phasmophobia Audio Only is enabled, do NOT fallback to system audio (YouTube, Discord, etc.)
+            if phasmo_only:
+                self.device_name = "Audio Standby: Awaiting Phasmophobia.exe..."
+                self.spectrum_bars = [0.0] * 16
+                self.current_bpm = 0.0
+                self.current_mps = 0.0
+                time.sleep(0.5)
+                continue
+
+            # 3. System-Wide WASAPI Loopback Fallback (ONLY if user explicitly disabled phasmophobia_audio_only)
             if pyaudio is None:
-                self.device_name = "Audio Standby (Awaiting Phasmophobia.exe launch)"
+                self.device_name = "Audio Standby (pyaudio unavailable)"
                 time.sleep(1.0)
                 continue
 
@@ -322,7 +369,7 @@ class AudioEngine:
 
                 self.sample_rate = int(loopback_device.get("defaultSampleRate", 44100))
                 channels = max(1, int(loopback_device.get("maxInputChannels", 2)))
-                self.device_name = f"{loopback_device.get('name', 'WASAPI Loopback')} (Waiting for Phasmophobia)"
+                self.device_name = f"{loopback_device.get('name', 'WASAPI Loopback')} (Fallback)"
 
                 stream = p.open(
                     format=pyaudio.paInt16,
@@ -335,11 +382,15 @@ class AudioEngine:
 
                 last_pid_check = time.time()
                 while self.running:
-                    if not self.config_manager.config.get("detectors_enabled", {}).get("audio_engine_enabled", True):
+                    current_detectors = self.config_manager.config.get("detectors_enabled", {})
+                    if not current_detectors.get("audio_engine_enabled", True):
                         self.device_name = "WASAPI Loopback [MUTED / OFF]"
                         self.spectrum_bars = [0.0] * 16
                         time.sleep(0.15)
                         continue
+                    if current_detectors.get("phasmophobia_audio_only", True):
+                        break  # Hot-swap back to strict process isolation
+
                     raw = stream.read(self.chunk_size, exception_on_overflow=False)
                     samples = (
                         np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
@@ -354,7 +405,7 @@ class AudioEngine:
 
                     # Periodically check if Phasmophobia launched to hot-swap to isolated capture
                     now = time.time()
-                    if now - last_pid_check >= 3.0:
+                    if now - last_pid_check >= 2.0:
                         last_pid_check = now
                         if self._find_phasmo_pid() is not None:
                             break  # Switch to dedicated per-process capture!

@@ -111,6 +111,8 @@ interface AudioTelemetry {
   last_onset_band?: string;
   sensitivity?: string;
   audio_muted?: boolean;
+  audio_isolated?: boolean;
+  phasmophobia_audio_only?: boolean;
 }
 
 // --- Hunt / smudge timing rules used for automatic behavior inference ---
@@ -268,6 +270,7 @@ export default function App() {
   const [lastOnsetFlash, setLastOnsetFlash] = useState<number>(0);
   const [audioSensitivity, setAudioSensitivity] = useState<string>('default');
   const [stereoMovingFilter, setStereoMovingFilter] = useState<boolean>(true);
+  const [phasmoAudioOnly, setPhasmoAudioOnly] = useState<boolean>(true);
   const [audioEngineEnabled, setAudioEngineEnabled] = useState<boolean>(true);
   const [visionEngineEnabled, setVisionEngineEnabled] = useState<boolean>(true);
   const [captureFps, setCaptureFps] = useState<number>(8);
@@ -1013,6 +1016,9 @@ export default function App() {
             if (typeof data.config.chroma_key === 'boolean') setChromaKeyEnabled(data.config.chroma_key);
             if (typeof data.config.detectors_enabled?.audio_engine_enabled === 'boolean') {
               setAudioEngineEnabled(data.config.detectors_enabled.audio_engine_enabled);
+            }
+            if (typeof data.config.detectors_enabled?.phasmophobia_audio_only === 'boolean') {
+              setPhasmoAudioOnly(data.config.detectors_enabled.phasmophobia_audio_only);
             }
             if (typeof data.config.detectors_enabled?.vision_engine_enabled === 'boolean') {
               setVisionEngineEnabled(data.config.detectors_enabled.vision_engine_enabled);
@@ -3074,9 +3080,24 @@ export default function App() {
                       </>
                     )}
                   </button>
-                  <span className="text-[11px] text-slate-400 truncate max-w-[180px]">
-                    {audioTelemetry.device}
-                  </span>
+                  <div className="flex flex-col items-end">
+                    <div className="flex items-center gap-1 mb-0.5">
+                      {audioTelemetry.audio_isolated ? (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                          Game Isolated
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                          Standby
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[10px] text-slate-400 truncate max-w-[190px] font-mono" title={audioTelemetry.device}>
+                      {audioTelemetry.device}
+                    </span>
+                  </div>
                 </div>
               </div>
               <div className="h-24 bg-black/40 border border-white/10 rounded-xl p-3 flex items-end gap-1.5">
@@ -3692,6 +3713,34 @@ export default function App() {
                   <span className="text-[10px] text-slate-500 mt-1 block">
                     Rejects player footsteps (|Pan| &lt; 0.14) while moving, but tracks panned ghost steps!
                   </span>
+                </div>
+
+                <div className="col-span-2 pt-2.5 mt-1 border-t border-slate-800/80 flex items-center justify-between">
+                  <div>
+                    <div className="flex items-center gap-1.5 text-white font-semibold text-xs">
+                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Dedicated Game Audio Isolation</span>
+                    </div>
+                    <span className="text-[10px] text-slate-400 block mt-0.5">
+                      Captures ONLY Phasmophobia.exe audio. Completely ignores Discord voice, YouTube, Spotify, and browser tabs. While game is closed, remains in silent standby.
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      const next = !phasmoAudioOnly;
+                      setPhasmoAudioOnly(next);
+                      updateBackendConfig({
+                        detectors_enabled: { phasmophobia_audio_only: next },
+                      });
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
+                      phasmoAudioOnly
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                        : 'bg-slate-900 text-slate-400 border-slate-800 hover:bg-slate-800'
+                    }`}
+                  >
+                    {phasmoAudioOnly ? 'ISOLATED (Game Only)' : 'ALL AUDIO (Fallback)'}
+                  </button>
                 </div>
               </div>
             </div>
