@@ -213,6 +213,52 @@ class SimulationDeck:
                 frame, (640, 360), (65, 135), 0, 0, 360, (45, 255, 70), -1
             )
 
+        elif scenario == "cursed_tarot_death":
+            # Handheld Tarot Cards: dark card back with ornate gold border and white card face + crimson Death skull
+            cv2.rectangle(frame, (800, 420), (1020, 680), (32, 28, 45), -1)
+            cv2.rectangle(frame, (810, 430), (1010, 670), (25, 175, 220), 4)  # Gold border
+            cv2.rectangle(frame, (825, 450), (995, 650), (240, 240, 245), -1)  # White card face
+            cv2.circle(frame, (910, 545), 24, (20, 20, 240), -1)  # Crimson Death skull center
+
+        elif scenario == "cursed_mirror_shattered":
+            # Handheld Haunted Mirror: Oval gold frame enclosing cracked glass pane
+            cv2.ellipse(frame, (910, 530), (85, 125), 0, 0, 360, (25, 185, 230), 8)  # Gold frame
+            cv2.ellipse(frame, (910, 530), (75, 115), 0, 0, 360, (28, 30, 32), -1)   # Glass pane
+            # Jagged crack lines across glass
+            cv2.line(frame, (860, 460), (960, 600), (220, 225, 235), 2)
+            cv2.line(frame, (950, 480), (880, 580), (210, 215, 225), 2)
+
+        elif scenario == "cursed_music_box":
+            # Handheld Music Box: Brass metallic box with winding key and cylinder
+            cv2.rectangle(frame, (810, 450), (1010, 650), (35, 175, 215), -1)  # Brass body
+            cv2.rectangle(frame, (840, 480), (980, 620), (55, 195, 235), -1)  # Inner chamber
+            cv2.circle(frame, (910, 550), 20, (30, 140, 180), -1)             # Rotating cylinder
+
+        elif scenario == "cursed_ouija":
+            # Wooden Ouija Board on floor with semi-circle letters & planchette
+            cv2.rectangle(frame, (450, 380), (830, 620), (35, 85, 135), -1)   # Wood board
+            cv2.ellipse(frame, (640, 500), (130, 70), 0, 180, 360, (185, 205, 215), 3)  # Letter arch
+            # Planchette triangle
+            pts = np.array([[640, 480], [615, 540], [665, 540]], np.int32)
+            cv2.fillPoly(frame, [pts], (210, 215, 220))
+
+        elif scenario == "cursed_circle":
+            # Floor Summoning Circle: 5 red candle stands with lit flame tips
+            for cx, cy in ((540, 420), (740, 420), (480, 550), (800, 550), (640, 640)):
+                cv2.circle(frame, (cx, cy), 16, (20, 20, 210), -1)   # Red candle stand
+                cv2.circle(frame, (cx, cy - 8), 7, (20, 195, 255), -1) # Lit flame tip
+
+        elif scenario == "cursed_monkey_paw":
+            # Handheld Monkey Paw: Dark fur paw with golden claws
+            cv2.rectangle(frame, (830, 460), (990, 650), (35, 65, 75), -1)  # Dark fur
+            for fx in (855, 885, 915, 945, 970):
+                cv2.ellipse(frame, (fx, 450), (6, 22), 0, 0, 360, (25, 185, 235), -1) # Golden claws
+
+        elif scenario == "cursed_voodoo_heart":
+            # Handheld Tortured Voodoo Doll: Burlap doll with center red heart pin
+            cv2.rectangle(frame, (820, 440), (1000, 660), (45, 95, 115), -1)  # Burlap body
+            cv2.circle(frame, (910, 550), 12, (20, 20, 240), -1)              # Crimson heart pin
+
         return frame
 
     @staticmethod

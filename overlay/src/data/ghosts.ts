@@ -66,6 +66,9 @@ export const BEHAVIOR_TAGS: BehaviorRule[] = [
   { id: 'obake_six_finger', label: '6-Finger UV / Shapeshift Blink', category: 'ability', description: 'Leaves a 6-finger handprint or briefly shapeshifts model during a hunt blink.', confirms: ['Obake'], exclusive: true },
   { id: 'phantom_photo', label: 'Vanished in Ghost Photo', category: 'ability', description: 'Ghost disappears in the photo without static when photographed outside a hunt.', confirms: ['Phantom'], exclusive: true },
   { id: 'hantu_breath', label: 'Visible Cold Breath on Ghost (Breaker Off)', category: 'ability', description: 'Ghost emits freezing breath from its mouth during a hunt while the fuse box is OFF.', confirms: ['Hantu'], exclusive: true },
+  { id: 'thaye_aging', label: 'Thaye Speed Decay Across Hunts', category: 'speed', description: 'Average hunt speed dropped significantly (>0.35 m/s) between early and late hunts.', confirms: ['Thaye'], exclusive: true },
+  { id: 'hantu_cold_accel', label: 'Hantu Cold Room Sprint (>2.2 m/s)', category: 'speed', description: 'Ghost moved fast in a freezing/cold room without Line of Sight acceleration.', confirms: ['Hantu'], exclusive: true },
+  { id: 'wraith_salt_immunity', label: 'Salt Disturbed with Zero UV Footprints', category: 'ability', description: 'Ghost stepped in salt pile, but zero UV footprints were left on the floor after multiple scans (Wraith).', confirms: ['Wraith'], exclusive: true },
 
   // --- Strong tells (boost a ghost but don't eliminate others) ---
   { id: 'mare_light_off', label: 'Instant Light Switch Off', category: 'ability', description: 'Ghost immediately switches off a light within 1s of you turning it on.', confirms: ['Mare'] },

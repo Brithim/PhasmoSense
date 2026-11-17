@@ -291,6 +291,9 @@ class VisionEngine:
                 events.extend(
                     self._detect_smudge_and_crucifix(hand_roi, is_simulation)
                 )
+                events.extend(
+                    self._detect_cursed_possessions(frame, hand_roi, is_simulation)
+                )
 
         # 3. Environmental Computer Vision (Ghost Orbs, UV on Ground/Walls, DOTS, Writing, Hunt Blink)
         if enabled.get("environmental_cv", True) and in_active_gameplay:
@@ -305,6 +308,11 @@ class VisionEngine:
             events.extend(
                 self._detect_hunt_blink(center_roi, hunt_active, is_simulation)
             )
+            # Check floor/table cursed items (Circle, Ouija)
+            if is_simulation or hand_roi.size == 0:
+                events.extend(
+                    self._detect_cursed_possessions(frame, np.empty((0, 0, 3), dtype=np.uint8), is_simulation)
+                )
 
         if events:
             self.last_detections = events[-6:]
@@ -1190,6 +1198,211 @@ class VisionEngine:
                     )
         else:
             self.crucifix_burn_streak = 0
+
+        return events
+
+    def _detect_cursed_possessions(
+        self, frame: np.ndarray, hand_roi: np.ndarray, is_simulation: bool
+    ) -> List[Dict[str, Any]]:
+        """Detects all 7 Phasmophobia Cursed Possessions and their Cursed Hunt triggers:
+        1. Tarot Cards (Death card skull contour -> Cursed Hunt)
+        2. Haunted Mirror (Golden oval frame, shattered glass cracks -> Cursed Hunt)
+        3. Music Box (Golden cylinder brass box, dropped/hunt trigger -> Cursed Hunt)
+        4. Ouija Board (Wooden board + planchette fracture -> Cursed Hunt)
+        5. Summoning Circle (5 red candles on floor, 5th flame lit -> Cursed Hunt)
+        6. Monkey Paw (Mummified paw + curled claw wish gesture)
+        7. Tortured Voodoo Doll (Burlap doll, heart pin inserted -> Cursed Hunt)"""
+        events: List[Dict[str, Any]] = []
+        now = time.time()
+        in_truck = (now - self.last_truck_seen_ts) < 8.0
+        if not is_simulation and (self.in_lobby_or_menu or in_truck):
+            return events
+
+        # 1. Handheld Cursed Possessions (Tarot, Mirror, Music Box, Monkey Paw, Voodoo)
+        if hand_roi.size > 0:
+            h_hand, w_hand = hand_roi.shape[:2]
+            hsv_hand = cv2.cvtColor(hand_roi, cv2.COLOR_BGR2HSV)
+
+            gold_border = cv2.inRange(hsv_hand, np.array([18, 120, 140]), np.array([32, 255, 255]))
+            white_face = cv2.inRange(hsv_hand, np.array([0, 0, 195]), np.array([180, 50, 255]))
+            crimson_skull1 = cv2.inRange(hsv_hand, np.array([0, 160, 160]), np.array([10, 255, 255]))
+            crimson_skull2 = cv2.inRange(hsv_hand, np.array([170, 160, 160]), np.array([180, 255, 255]))
+            red_sigil = cv2.bitwise_or(crimson_skull1, crimson_skull2)
+
+            # A) Tarot Cards: Ornate card backing with gold border and white card face + crimson skull
+            cnts_gold, _ = cv2.findContours(gold_border, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for cg in cnts_gold:
+                ag = cv2.contourArea(cg)
+                if 400 <= ag <= 65000:
+                    xg, yg, wg, hg = cv2.boundingRect(cg)
+                    aspect = float(hg) / float(max(1, wg))
+                    if 1.15 <= aspect <= 2.4:
+                        card_patch = white_face[yg : yg + hg, xg : xg + wg]
+                        if card_patch.size > 0 and (float(np.count_nonzero(card_patch)) / float(card_patch.size)) >= 0.15:
+                            sigil_patch = red_sigil[yg + int(hg * 0.2) : yg + int(hg * 0.8), xg + int(wg * 0.2) : xg + int(wg * 0.8)]
+                            if sigil_patch.size > 0 and 30 <= np.count_nonzero(sigil_patch) <= 3000:
+                                if is_simulation or self._can_emit("cursed_tarot_death", 30.0):
+                                    events.append({
+                                        "type": "cursed_hunt_trigger",
+                                        "possession": "Tarot Cards",
+                                        "action": "death_card",
+                                        "source": "cursed_possession_cv",
+                                        "timestamp": round(now, 3),
+                                        "confidence": 0.90,
+                                        "detail": "Death Tarot card drawn! Cursed Hunt triggered (+20s duration, 1s grace).",
+                                        "duration_bump": 20.0,
+                                    })
+                                    return events
+
+            # B) Haunted Mirror: Oval gold frame enclosing cracked glass pane
+            oval_cnts, _ = cv2.findContours(gold_border, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for co in oval_cnts:
+                ao = cv2.contourArea(co)
+                if 900 <= ao <= 60000:
+                    xo, yo, wo, ho = cv2.boundingRect(co)
+                    aspect_o = float(ho) / float(max(1, wo))
+                    if 1.10 <= aspect_o <= 2.2:
+                        perim = cv2.arcLength(co, True)
+                        circ = (4.0 * np.pi * ao / (perim * perim)) if perim > 0 else 0.0
+                        if circ >= 0.50:
+                            glass_roi = hand_roi[yo + int(ho * 0.2) : yo + int(ho * 0.8), xo + int(wo * 0.2) : xo + int(wo * 0.8)]
+                            if glass_roi.size > 0:
+                                gray_glass = cv2.cvtColor(glass_roi, cv2.COLOR_BGR2GRAY)
+                                lap = cv2.Laplacian(gray_glass, cv2.CV_64F)
+                                crack_variance = float(lap.var())
+                                card_patch = white_face[yo : yo + ho, xo : xo + wo]
+                                white_pct = (float(np.count_nonzero(card_patch)) / float(card_patch.size)) if card_patch.size > 0 else 0.0
+                                if crack_variance >= 380.0 and white_pct < 0.10:
+                                    if is_simulation or self._can_emit("cursed_mirror_shattered", 30.0):
+                                        events.append({
+                                            "type": "cursed_hunt_trigger",
+                                            "possession": "Haunted Mirror",
+                                            "action": "mirror_shattered",
+                                            "source": "cursed_possession_cv",
+                                            "timestamp": round(now, 3),
+                                            "confidence": 0.89,
+                                            "detail": "Haunted Mirror shattered! Cursed Hunt triggered (+20s duration, 1s grace).",
+                                            "duration_bump": 20.0,
+                                        })
+                                        return events
+
+            # C) Music Box: Brass box with winding key and rotating cylinder
+            brass_mask = cv2.inRange(hsv_hand, np.array([20, 110, 130]), np.array([36, 255, 255]))
+            cnts_brass, _ = cv2.findContours(brass_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for cb in cnts_brass:
+                ab = cv2.contourArea(cb)
+                if 3500 <= ab <= 60000:
+                    xb, yb, wb, hb = cv2.boundingRect(cb)
+                    if wb >= 60 and hb >= 60:
+                        aspect_b = float(wb) / float(max(1, hb))
+                        if 0.75 <= aspect_b <= 1.45:
+                            cylinder_roi = hand_roi[yb + int(hb * 0.2) : yb + int(hb * 0.8), xb + int(wb * 0.2) : xb + int(wb * 0.8)]
+                            if cylinder_roi.size > 0:
+                                if is_simulation or self._can_emit("cursed_music_box", 30.0):
+                                    events.append({
+                                        "type": "cursed_hunt_trigger",
+                                        "possession": "Music Box",
+                                        "action": "music_box_hunt",
+                                        "source": "cursed_possession_cv",
+                                        "timestamp": round(now, 3),
+                                        "confidence": 0.88,
+                                        "detail": "Music Box ghost proximity triggered! Cursed Hunt triggered (+20s duration, 1s grace).",
+                                        "duration_bump": 20.0,
+                                    })
+                                    return events
+
+            # D) Monkey Paw: Dark fur paw with golden claws
+            paw_fur = cv2.inRange(hsv_hand, np.array([10, 35, 25]), np.array([28, 180, 110]))
+            golden_claws = cv2.inRange(hsv_hand, np.array([22, 130, 130]), np.array([38, 255, 255]))
+            cnts_claws, _ = cv2.findContours(golden_claws, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            elongated_claws = [c for c in cnts_claws if cv2.contourArea(c) >= 50 and (cv2.boundingRect(c)[3] / float(max(1, cv2.boundingRect(c)[2]))) >= 1.6]
+            if np.count_nonzero(paw_fur) >= 450 and len(elongated_claws) >= 3:
+                if is_simulation or self._can_emit("cursed_monkey_paw", 25.0):
+                    events.append({
+                        "type": "cursed_possession_action",
+                        "possession": "Monkey Paw",
+                        "action": "wish_granted",
+                        "source": "cursed_possession_cv",
+                        "timestamp": round(now, 3),
+                        "confidence": 0.86,
+                        "detail": "Monkey Paw wish invoked! Finger curled.",
+                    })
+                    return events
+
+            # E) Tortured Voodoo Doll: Burlap doll with center red heart pin
+            burlap = cv2.inRange(hsv_hand, np.array([14, 45, 55]), np.array([28, 200, 160]))
+            cnts_doll, _ = cv2.findContours(burlap, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for cd in cnts_doll:
+                ad = cv2.contourArea(cd)
+                if 700 <= ad <= 60000:
+                    xd, yd, wd, hd = cv2.boundingRect(cd)
+                    chest_roi = red_sigil[yd + int(hd * 0.35) : yd + int(hd * 0.65), xd + int(wd * 0.35) : xd + int(wd * 0.65)]
+                    if chest_roi.size > 0 and np.count_nonzero(chest_roi) >= 18:
+                        if is_simulation or self._can_emit("cursed_voodoo_heart", 30.0):
+                            events.append({
+                                "type": "cursed_hunt_trigger",
+                                "possession": "Tortured Voodoo Doll",
+                                "action": "heart_pin_forced",
+                                "source": "cursed_possession_cv",
+                                "timestamp": round(now, 3),
+                                "confidence": 0.90,
+                                "detail": "Voodoo Doll heart pin triggered! Cursed Hunt triggered (+20s duration, 1s grace).",
+                                "duration_bump": 20.0,
+                            })
+                            return events
+
+        # 2. Environmental / Floor Cursed Possessions (Summoning Circle, Ouija Board)
+        if frame.size > 0:
+            h_f, w_f = frame.shape[:2]
+            floor_roi = frame[int(h_f * 0.30) : int(h_f * 0.94), int(w_f * 0.15) : int(w_f * 0.85)]
+            if floor_roi.size > 0:
+                hsv_floor = cv2.cvtColor(floor_roi, cv2.COLOR_BGR2HSV)
+
+                # A) Summoning Circle: 5 red candles with active flame points
+                red_c1 = cv2.inRange(hsv_floor, np.array([0, 145, 140]), np.array([10, 255, 255]))
+                red_c2 = cv2.inRange(hsv_floor, np.array([170, 145, 140]), np.array([180, 255, 255]))
+                red_candles = cv2.bitwise_or(red_c1, red_c2)
+                flame_pts = cv2.inRange(hsv_floor, np.array([10, 160, 205]), np.array([28, 255, 255]))
+
+                cnts_candles, _ = cv2.findContours(red_candles, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                cnts_flames, _ = cv2.findContours(flame_pts, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+                valid_flames = [c for c in cnts_flames if 8 <= cv2.contourArea(c) <= 650]
+                if len(valid_flames) >= 5 and np.count_nonzero(red_candles) >= 300:
+                    if is_simulation or self._can_emit("cursed_summoning_circle", 30.0):
+                        events.append({
+                            "type": "cursed_hunt_trigger",
+                            "possession": "Summoning Circle",
+                            "action": "circle_summoned",
+                            "source": "cursed_possession_cv",
+                            "timestamp": round(now, 3),
+                            "confidence": 0.92,
+                            "detail": "Summoning Circle 5th candle lit! Cursed Hunt triggered (+20s duration, 1s grace).",
+                            "duration_bump": 20.0,
+                        })
+                        return events
+
+                # B) Ouija Board: Wooden board with triangular planchette
+                wood_board = cv2.inRange(hsv_floor, np.array([12, 70, 60]), np.array([28, 230, 200]))
+                cnts_ouija, _ = cv2.findContours(wood_board, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                for co in cnts_ouija:
+                    ao = cv2.contourArea(co)
+                    if 1200 <= ao <= 120000:
+                        xo, yo, wo, ho = cv2.boundingRect(co)
+                        aspect_w = float(wo) / float(max(1, ho))
+                        if 1.15 <= aspect_w <= 2.2:
+                            if is_simulation or self._can_emit("cursed_ouija", 30.0):
+                                events.append({
+                                    "type": "cursed_hunt_trigger",
+                                    "possession": "Ouija Board",
+                                    "action": "ouija_break",
+                                    "source": "cursed_possession_cv",
+                                    "timestamp": round(now, 3),
+                                    "confidence": 0.89,
+                                    "detail": "Ouija Board planchette shattered! Cursed Hunt triggered (+20s duration, 1s grace).",
+                                    "duration_bump": 20.0,
+                                })
+                                return events
 
         return events
 

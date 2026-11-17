@@ -230,6 +230,18 @@ export default function App() {
   const [parabolicReading, setParabolicReading] = useState<{ reading: number; estimated_distance_m: number; timestamp: number } | null>(null);
   const [huntElapsed, setHuntElapsed] = useState<number>(0);
   const [huntRunning, setHuntRunning] = useState<boolean>(false);
+  const [isCursedHunt, setIsCursedHunt] = useState<boolean>(false);
+  const [cursedPossession, setCursedPossession] = useState<string | null>(null);
+  const [advisorTraits, setAdvisorTraits] = useState<Array<{
+    ghost: string;
+    trait_id: string;
+    badge: string;
+    title: string;
+    confidence: number;
+    reasoning: string;
+    suggested_action: string;
+    timestamp: number;
+  }>>([]);
 
   // Live values read by WebSocket / hotkey handlers. Refs (not state) so handlers never see stale values.
   const currentSanityRef = useRef<number>(100);
@@ -399,6 +411,9 @@ export default function App() {
     setParabolicReading(null);
     setHuntElapsed(0);
     setHuntRunning(false);
+    setIsCursedHunt(false);
+    setCursedPossession(null);
+    setAdvisorTraits([]);
     setToasts([]);
     setMatchStartTime(Date.now());
     setObjectives((prev) => prev.map((o) => ({ ...o, completed: false })));
@@ -910,6 +925,57 @@ export default function App() {
       });
     }
 
+    if (type === 'cursed_hunt_trigger') {
+      setIsCursedHunt(true);
+      setCursedPossession(evt.possession || 'Cursed Possession');
+      setHuntRunning(true);
+      pushToast({
+        tier: 'auto_applied',
+        title: `CURSED HUNT: ${evt.possession || 'Cursed Item'}`,
+        detail: evt.detail || 'Cursed Hunt triggered (+20s duration, 1s grace period)!',
+        confidence: conf,
+      });
+    }
+
+    if (type === 'cursed_possession_action') {
+      pushToast({
+        tier: 'auto_applied',
+        title: `${evt.possession}: Action Invoked`,
+        detail: evt.detail || 'Cursed item action observed.',
+        confidence: conf,
+      });
+    }
+
+    if (type === 'advisor_trait') {
+      setAdvisorTraits((prev) => {
+        const filtered = prev.filter((t) => t.trait_id !== evt.trait_id);
+        return [
+          ...filtered,
+          {
+            ghost: evt.ghost,
+            trait_id: evt.trait_id,
+            badge: evt.badge || evt.title,
+            title: evt.title,
+            confidence: conf,
+            reasoning: evt.reasoning,
+            suggested_action: evt.suggested_action || 'confirm',
+            timestamp: Date.now(),
+          },
+        ];
+      });
+      pushToast({
+        tier: 'auto_applied',
+        title: evt.badge || evt.title,
+        detail: evt.reasoning,
+        confidence: conf,
+      });
+      if (conf >= 0.85 && evt.trait_id) {
+        setActiveBehaviors((prev) =>
+          prev.includes(evt.trait_id) ? prev : [...prev, evt.trait_id]
+        );
+      }
+    }
+
     if (type === 'salt_stepped') {
       setSaltStepRemaining(15);
       setObjectives((prev) =>
@@ -1414,6 +1480,11 @@ export default function App() {
                     <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-rose-950/80 border border-rose-500 text-rose-300 font-mono text-xs font-bold animate-pulse">
                       <AlertTriangle className="w-3 h-3 text-rose-400" />
                       <span>HUNT {huntElapsed}s</span>
+                      {isCursedHunt && (
+                        <span className="ml-1 text-[9px] px-1 py-0.2 rounded bg-rose-600/40 text-rose-200 border border-rose-400">
+                          CURSED (+20s)
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1838,6 +1909,11 @@ export default function App() {
                       <div className="flex items-center gap-1.5 text-rose-400 font-mono font-bold animate-pulse">
                         <AlertTriangle className="w-3.5 h-3.5" />
                         <span>HUNT ACTIVE: {huntElapsed}s</span>
+                        {isCursedHunt && (
+                          <span className="ml-1 text-[9px] px-1 py-0.2 rounded bg-rose-600/40 text-rose-200 border border-rose-400">
+                            CURSED (+20s)
+                          </span>
+                        )}
                       </div>
                     )}
                   </div>
@@ -2488,6 +2564,60 @@ export default function App() {
                 </div>
               )}
             </div>
+
+            {/* Ghost Mechanics AI Smart Advisor */}
+            {advisorTraits.length > 0 && (
+              <div className={`rounded-2xl p-4 border ${activeTheme.cardBg} ${activeTheme.cardBorder}`}>
+                <div className="flex items-center justify-between mb-2.5">
+                  <h2 className="text-xs font-bold uppercase tracking-wider text-slate-200 flex items-center gap-1.5">
+                    <Brain className={`w-4 h-4 ${activeAccent.textClass}`} /> Smart Advisor: Observed Ghost Traits
+                  </h2>
+                  <span className="text-[10px] text-slate-400 font-mono">
+                    {advisorTraits.length} active observation{advisorTraits.length > 1 ? 's' : ''}
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  {advisorTraits.map((trait) => (
+                    <div
+                      key={trait.trait_id}
+                      className="bg-black/50 border border-white/10 rounded-xl p-2.5 flex items-center justify-between gap-3"
+                    >
+                      <div>
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <span className="text-xs font-bold text-white flex items-center gap-1">
+                            {trait.badge}
+                          </span>
+                          <span className="text-[9px] px-1.5 py-0.2 rounded font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                            {Math.round(trait.confidence * 100)}% Conf
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-300">
+                          {trait.reasoning}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          if (trait.trait_id) {
+                            setActiveBehaviors((prev) =>
+                              prev.includes(trait.trait_id) ? prev : [...prev, trait.trait_id]
+                            );
+                            pushToast({
+                              tier: 'auto_applied',
+                              title: `Trait Applied: ${trait.title}`,
+                              detail: `Applied to deduction matrix solver.`,
+                              confidence: trait.confidence,
+                            });
+                          }
+                        }}
+                        className={`shrink-0 px-2.5 py-1 rounded-lg text-xs font-bold border transition ${activeAccent.activeBadgeClass} ${activeAccent.borderClass}`}
+                      >
+                        Apply Trait
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* 0-Evidence & Nightmare Behavioral Elimination Checklist */}
             <div className={`rounded-2xl p-4 border ${activeTheme.cardBg} ${activeTheme.cardBorder}`}>

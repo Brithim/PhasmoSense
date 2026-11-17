@@ -43,6 +43,13 @@ def _run_tests_inner(cfg: ConfigManager) -> None:
         "parabolic_mic",
         "smudge_ignition",
         "crucifix_burned",
+        "cursed_tarot_death",
+        "cursed_mirror_shattered",
+        "cursed_music_box",
+        "cursed_ouija",
+        "cursed_circle",
+        "cursed_monkey_paw",
+        "cursed_voodoo_heart",
     ]
     for sc in cv_scenarios:
         ve.cooldowns.clear()
@@ -385,6 +392,60 @@ def _run_tests_inner(cfg: ConfigManager) -> None:
     walk_sb_evts = ae_walk.analyze_samples(footstep_chunk, sample_rate=sr, is_simulation=False)
     assert not any(e.get("evidence") == "Spirit Box" for e in walk_sb_evts), f"Footstep during walking falsely triggered Spirit Box: {walk_sb_evts}"
     print("[PASS] REGRESSION 15b: 0 false Spirit Box vocal detections while player is walking!")
+
+    # Regression test 16a: All 7 Cursed Possessions & Cursed Hunt Duration Bump
+    for cursed_sc, exp_possession in (
+        ("cursed_tarot_death", "Tarot Cards"),
+        ("cursed_mirror_shattered", "Haunted Mirror"),
+        ("cursed_music_box", "Music Box"),
+        ("cursed_ouija", "Ouija Board"),
+        ("cursed_circle", "Summoning Circle"),
+        ("cursed_voodoo_heart", "Tortured Voodoo Doll"),
+    ):
+        ve.cooldowns.clear()
+        c_evts = ve.process_frame(SimulationDeck.generate_frame(cursed_sc), True, True)
+        assert any(e.get("type") == "cursed_hunt_trigger" and e.get("possession") == exp_possession for e in c_evts), f"Failed cursed hunt trigger for {exp_possession}: {c_evts}"
+        assert any(e.get("duration_bump") == 20.0 for e in c_evts), f"Failed +20s duration bump for {exp_possession}"
+    # Monkey paw wish action
+    ve.cooldowns.clear()
+    mp_evts = ve.process_frame(SimulationDeck.generate_frame("cursed_monkey_paw"), True, True)
+    assert any(e.get("type") == "cursed_possession_action" and e.get("possession") == "Monkey Paw" for e in mp_evts), f"Failed monkey paw wish: {mp_evts}"
+    print("[PASS] REGRESSION 16a: All 7 Cursed Possessions & Cursed Hunt +20s triggers verified!")
+
+    # Regression test 16b: Ghost Mechanics AI Smart Advisor passive traits
+    from ghost_advisor import GhostAdvisor
+    adv = GhostAdvisor(cfg)
+
+    # 1. Thaye aging speed decay
+    adv.on_hunt_start(is_cursed=False)
+    adv.on_hunt_end([2.75, 2.70, 2.65])
+    adv.on_hunt_start(is_cursed=False)
+    thaye_evts = adv.on_hunt_end([2.15, 2.10, 2.05])
+    assert any(e.get("trait_id") == "thaye_aging" and e.get("ghost") == "Thaye" for e in thaye_evts), f"Failed Thaye aging trait: {thaye_evts}"
+
+    # 2. Hantu cold acceleration in freezing room
+    adv.on_temperature_update(1.2)
+    hantu_evts = adv.on_footstep_speed(2.45, los_accel=False)
+    assert any(e.get("trait_id") == "hantu_cold_accel" and e.get("ghost") == "Hantu" for e in hantu_evts), f"Failed Hantu cold accel trait: {hantu_evts}"
+
+    # 3. Wraith salt step immunity
+    adv.on_salt_stepped()
+    adv.last_salt_step_ts = time.time() - 9.0
+    wraith_evts = adv.check_wraith_salt(uv_active=True)
+    assert any(e.get("trait_id") == "wraith_salt_immunity" and e.get("ghost") == "Wraith" for e in wraith_evts), f"Failed Wraith salt immunity trait: {wraith_evts}"
+
+    # 4. Mare instant light switch rejection (<0.4s)
+    adv.on_light_switched(turned_on=True)
+    adv.last_light_on_ts = time.time() - 0.22
+    mare_evts = adv.on_light_switched(turned_on=False)
+    assert any(e.get("trait_id") == "mare_lightswitch" and e.get("ghost") == "Mare" for e in mare_evts), f"Failed Mare lightswitch trait: {mare_evts}"
+
+    # 5. Demon 20s cooldown
+    adv.last_hunt_end_ts = time.time() - 21.0
+    demon_evts = adv.on_hunt_start(is_cursed=False)
+    assert any(e.get("trait_id") == "demon_cooldown" and e.get("ghost") == "Demon" for e in demon_evts), f"Failed Demon 20s cooldown trait: {demon_evts}"
+
+    print("[PASS] REGRESSION 16b: Ghost Mechanics AI Smart Advisor (Thaye, Hantu, Wraith, Mare, Demon) verified!")
 
     print("All CV, OCR, and Audio DSP pipeline tests passed!")
 

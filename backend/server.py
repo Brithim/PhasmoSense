@@ -27,12 +27,14 @@ try:
     from config import ConfigManager
     from vision_engine import VisionEngine
     from audio_engine import AudioEngine
+    from ghost_advisor import GhostAdvisor
     from simulator import SimulationDeck
     import database
 
     config_manager = ConfigManager()
     vision_engine = VisionEngine(config_manager)
     audio_engine = AudioEngine(config_manager)
+    ghost_advisor = GhostAdvisor(config_manager)
 except Exception as exc:
     import traceback
     err_text = traceback.format_exc()
@@ -143,6 +145,7 @@ async def broadcast(payload: Dict[str, Any]) -> None:
 async def telemetry_and_vision_loop() -> None:
     audio_engine.start()
     last_capture = 0.0
+    was_hunt_active = False
     while True:
         try:
             loop_start = time.time()
@@ -154,6 +157,13 @@ async def telemetry_and_vision_loop() -> None:
             interval = 1.0 / float(effective_fps)
 
             events: List[Dict[str, Any]] = []
+
+            # Track hunt transitions for Ghost Advisor
+            if hunt_active and not was_hunt_active:
+                events.extend(ghost_advisor.on_hunt_start(is_cursed=False))
+            elif not hunt_active and was_hunt_active:
+                events.extend(ghost_advisor.on_hunt_end(audio_engine.hunt_speeds))
+            was_hunt_active = hunt_active
 
             if vision_enabled and (loop_start - last_capture >= interval):
                 last_capture = loop_start
@@ -168,6 +178,24 @@ async def telemetry_and_vision_loop() -> None:
 
             audio_evts = audio_engine.pop_events()
             events.extend(audio_evts)
+
+            # Process detection events through Ghost Advisor for trait inferences
+            for evt in list(events):
+                etype = evt.get("type")
+                if etype == "cursed_hunt_trigger":
+                    events.extend(ghost_advisor.on_hunt_start(is_cursed=True))
+                elif etype == "smudge_timer":
+                    ghost_advisor.on_smudge_ignited()
+                elif etype == "temperature":
+                    ghost_advisor.on_temperature_update(float(evt.get("temp", 18.0)))
+                elif etype == "footstep_cadence":
+                    events.extend(ghost_advisor.on_footstep_speed(
+                        float(evt.get("mps", 1.70)), bool(evt.get("los_accelerating", False))
+                    ))
+                elif evt.get("salt_stepped"):
+                    ghost_advisor.on_salt_stepped()
+                elif etype == "evidence" and evt.get("evidence") == "Ultraviolet":
+                    ghost_advisor.on_uv_footprint_seen()
 
             for evt in events:
                 evt["timestamp"] = round(time.time(), 3)
