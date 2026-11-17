@@ -78,6 +78,7 @@ class AudioEngine:
         self.hunt_start_time: float = 0.0
         self.last_hunt_ambient_time: float = 0.0
         self.steps_before_flicker_streak: int = 0
+        self.spirit_box_audio_streak: int = 0
         self.emf_t3_pulse_times: Deque[float] = collections.deque(maxlen=16)
         self.footstep_pan: float = 0.0
         self.footstep_direction: str = "CENTER"
@@ -522,15 +523,29 @@ class AudioEngine:
         )
 
         # 1b. Spirit Box Audio Response
-        if (
+        # Rejects player footsteps & movement scuffs:
+        # Footstep impacts produce transient spikes (high crest factor >= 3.5), whereas real
+        # Spirit Box ghost responses are sustained phonemic speech formants + radio carrier (crest factor < 3.5).
+        # Furthermore, require consecutive frame streak (>= 3 frames while walking, >= 2 frames while stationary)
+        # so single-frame clicks/scuffs on tile, wood, gravel, or concrete never falsely trigger.
+        is_sb_spectral_match = (
             enabled.get("audio_equipment", True)
             and voice_ratio > 0.38
             and radio_high_ratio > 0.20
             and speech_bass_ratio < 0.15
             and rms > 0.025
-        ):
+            and crest_factor < 3.5
+        )
+
+        if is_sb_spectral_match:
+            self.spirit_box_audio_streak += 1
+        else:
+            self.spirit_box_audio_streak = 0
+
+        req_sb_streak = 1 if is_simulation else (3 if is_moving else 2)
+        if is_sb_spectral_match and self.spirit_box_audio_streak >= req_sb_streak:
             is_voice_chat = False
-            if is_simulation or self._can_emit("spirit_box_audio", 7.0):
+            if is_simulation or self._can_emit("spirit_box_audio", 8.0):
                 evt = {
                     "type": "evidence",
                     "source": "spirit_box_audio_dsp",
@@ -739,6 +754,9 @@ class AudioEngine:
                 dominant_surface = "concrete"
             elif transient_high:
                 dominant_surface = "gravel"
+
+            if dominant_surface is not None:
+                self.spirit_box_audio_streak = 0
 
             # Stereo Panning Calculation
             pan = 0.0

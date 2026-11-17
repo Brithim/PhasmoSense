@@ -359,6 +359,33 @@ def _run_tests_inner(cfg: ConfigManager) -> None:
     assert len(active_cv_evts) > 0, "Expected active CV detections when vision engine re-enabled"
     print("[PASS] REGRESSION 14b: Screen Monitoring ON instantly restores live computer vision tracking!")
 
+    # Regression test 15a: 0 false Crucifix burn detections on orange lightbulbs/ambient walls without charred body, or in truck/lobby
+    ve_cruc = VisionEngine(cfg)
+    orange_lamp = np.full((720, 1280, 3), 140, dtype=np.uint8)  # Bright warm ambient room
+    cv2.circle(orange_lamp, (900, 500), 14, (15, 120, 245), -1)  # Orange light spot on white/tan background
+    cruc_evts = []
+    for _ in range(5):
+        cruc_evts.extend(ve_cruc.process_frame(orange_lamp, is_simulation=False))
+    assert not any(e.get("type") == "crucifix_burned" for e in cruc_evts), f"Orange lamp without charred cross falsely triggered Crucifix burn: {cruc_evts}"
+
+    # Also verify truck/lobby immunity
+    ve_cruc.last_truck_seen_ts = time.time()
+    sim_cruc_frame = SimulationDeck.generate_frame("crucifix_burned")
+    truck_cruc_evts = ve_cruc.process_frame(sim_cruc_frame, is_simulation=False)
+    assert not any(e.get("type") == "crucifix_burned" for e in truck_cruc_evts), f"Crucifix burn triggered while in truck: {truck_cruc_evts}"
+    print("[PASS] REGRESSION 15a: 0 false Crucifix burn detections on lamps/walls or inside truck/lobby!")
+
+    # Regression test 15b: 0 false Spirit Box detections during player movement / footsteps
+    ae_walk = AudioEngine(cfg)
+    ae_walk.player_moving = True
+    ae_walk.last_player_move_time = time.time()
+    sr = 44100
+    t = np.linspace(0, 2048 / sr, 2048, endpoint=False)
+    footstep_chunk = (0.28 * np.sin(2 * np.pi * 380 * t) + 0.18 * np.sin(2 * np.pi * 2400 * t)).astype(np.float32)
+    walk_sb_evts = ae_walk.analyze_samples(footstep_chunk, sample_rate=sr, is_simulation=False)
+    assert not any(e.get("evidence") == "Spirit Box" for e in walk_sb_evts), f"Footstep during walking falsely triggered Spirit Box: {walk_sb_evts}"
+    print("[PASS] REGRESSION 15b: 0 false Spirit Box vocal detections while player is walking!")
+
     print("All CV, OCR, and Audio DSP pipeline tests passed!")
 
 

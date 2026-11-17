@@ -83,6 +83,8 @@ class VisionEngine:
         self.uv_streak: int = 0
         self.spirit_box_streak: int = 0
         self.writing_streak: int = 0
+        self.crucifix_burn_streak: int = 0
+        self.last_truck_seen_ts: float = 0.0
         self.hunt_blink_samples: List[Tuple[float, bool]] = []
         self.cold_non_freezing_count: int = 0
         self.first_cold_non_freezing_ts: float = 0.0
@@ -427,6 +429,7 @@ class VisionEngine:
         # C) Truck Sanity Monitor OCR
         if enabled.get("truck_sanity_ocr", True):
             if "sanity" in joined_text or "average" in joined_text:
+                self.last_truck_seen_ts = time.time()
                 pct_matches = re.findall(r"(\d{1,3})\s*%", joined_text)
                 valid_pcts = [int(p) for p in pct_matches if 0 <= int(p) <= 100]
                 if valid_pcts:
@@ -513,6 +516,7 @@ class VisionEngine:
         if "objective" in joined_text or "whiteboard" in joined_text or (
             any(k in joined_text for k in ("cleanse", "incense", "motion sensor", "walk in salt", "crucifix", "photo of the ghost"))
         ):
+            self.last_truck_seen_ts = time.time()
             possible_objs = []
             if "incense" in joined_text or "cleanse" in joined_text:
                 possible_objs.append("Cleanse the area near the ghost using Incense")
@@ -1144,19 +1148,48 @@ class VisionEngine:
                     )
 
         # Crucifix burn: charred black cross contour with glowing ember core (Hue 4..18, Sat >= 170, Val >= 190)
+        now = time.time()
+        in_truck = (now - self.last_truck_seen_ts) < 8.0
+        # In live gameplay: reject if player is in lobby or in truck (crucifixes never burn in lobby or truck)
+        if not is_simulation and (self.in_lobby_or_menu or in_truck):
+            self.crucifix_burn_streak = 0
+            return events
+
         ember_mask = cv2.inRange(hsv, np.array([4, 170, 190]), np.array([18, 255, 255]))
-        ember_px = int(np.count_nonzero(ember_mask))
-        if 25 <= ember_px <= 650:
-            if is_simulation or self._can_emit("crucifix_burned_cv", 20.0):
-                events.append(
-                    {
-                        "type": "crucifix_burned",
-                        "source": "crucifix_cv",
-                        "timestamp": round(time.time(), 3),
-                        "confidence": 0.86,
-                        "detail": "Crucifix burn detected! A ghost hunt was successfully blocked.",
-                    }
-                )
+        cnts, _ = cv2.findContours(ember_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        has_crucifix_ember = False
+        for c in cnts:
+            area = cv2.contourArea(c)
+            if 25 <= area <= 650:
+                x, y, cw, ch = cv2.boundingRect(c)
+                aspect = float(cw) / float(max(1, ch))
+                if 0.35 <= aspect <= 2.8:
+                    # Check for surrounding charred cross material (Val <= 55, Sat <= 85)
+                    x0, y0 = max(0, x - 24), max(0, y - 24)
+                    x1, y1 = min(roi.shape[1], x + cw + 24), min(roi.shape[0], y + ch + 24)
+                    surround = hsv[y0:y1, x0:x1]
+                    if surround.size > 0:
+                        char_mask = (surround[:, :, 2] <= 55) & (surround[:, :, 1] <= 85)
+                        char_px = int(np.count_nonzero(char_mask))
+                        if char_px >= max(80, int(area * 0.75)):
+                            has_crucifix_ember = True
+                            break
+
+        if has_crucifix_ember:
+            self.crucifix_burn_streak += 1
+            if is_simulation or self.crucifix_burn_streak >= 2:
+                if is_simulation or self._can_emit("crucifix_burned_cv", 25.0):
+                    events.append(
+                        {
+                            "type": "crucifix_burned",
+                            "source": "crucifix_cv",
+                            "timestamp": round(now, 3),
+                            "confidence": 0.88,
+                            "detail": "Crucifix burn detected! A ghost hunt was successfully blocked.",
+                        }
+                    )
+        else:
+            self.crucifix_burn_streak = 0
 
         return events
 
@@ -1673,6 +1706,8 @@ class VisionEngine:
 
         if len(col_pts) < 90:
             return events
+
+        self.last_truck_seen_ts = time.time()
 
         # Keep the longest horizontally contiguous trace
         runs: List[List[Tuple[int, float]]] = [[col_pts[0]]]
